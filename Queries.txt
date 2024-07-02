@@ -1,0 +1,93 @@
+# Slide 1 - Query used for first insight (JOIN, Aggregation, CTE)
+
+WITH QuartileFilms AS( 	
+ SELECT category.name Category, 	 
+                film.rental_duration, 	 
+                NTILE(4) OVER ( PARTITION BY category.name ORDER BY film.rental_duration ) AS Rental_Length_Category 
+FROM film 
+JOIN film_category ON film.film_id = film_category.film_id 
+JOIN category ON category.category_id = film_category.category_id 
+WHERE category.name IN ('Animation', 'Children', 'Classics', 'Comedy', 'Family', 'Music') ) 
+SELECT Category, 
+               Rental_Length_Category, 	 
+               COUNT(*) AS Count FROM QuartileFilms 
+GROUP BY Category, Rental_Length_Category 
+ORDER BY Category, Rental_Length_Category;
+
+# Slide 2 - Query used for second insight (JOIN, Aggregation)
+
+SELECT  EXTRACT(MONTH FROM rental.rental_date) AS Rental_month, 	
+                EXTRACT(YEAR FROM rental.rental_date) AS Rental_year, 	
+                inventory.store_id AS Store_id, 	 
+                COUNT(rental.rental_id) AS Rental_Count	 
+FROM rental 
+JOIN inventory ON rental.inventory_id = inventory.inventory_id 
+GROUP BY Rental_year, Rental_month, Store_id 
+ORDER BY Rental_year, Rental_month, Store_id
+
+# Slide 3 - Query used for third insight (JOIN, Aggregation, CTE)
+
+WITH TotalPayments AS ( 
+SELECT customer_id, 
+  	      SUM(amount) AS total_amount 
+FROM payment 
+WHERE EXTRACT(YEAR FROM payment_date) = 2007 
+GROUP BY customer_id 
+ORDER BY total_amount DESC LIMIT 10 ), 
+MonthlyPayments AS ( 
+SELECT p.customer_id, 
+               CONCAT(c.first_name, ' ', c.last_name) AS fullname, 
+               DATE_TRUNC('month', p.payment_date) AS pay_mon, 
+               COUNT(p.payment_id) AS pay_countpermon, 
+               SUM(p.amount) AS pay_amount 
+FROM payment p 
+JOIN customer c ON p.customer_id = c.customer_id 
+WHERE EXTRACT(YEAR FROM p.payment_date) = 2007 
+GROUP BY p.customer_id, fullname, pay_mon ) 
+SELECT mp.pay_mon, 
+               mp.fullname, 
+   	       mp.pay_countpermon, 
+               mp.pay_amount 
+FROM MonthlyPayments mp 
+JOIN TotalPayments tp ON mp.customer_id = tp.customer_id 
+ORDER BY mp.fullname, mp.pay_mon;
+
+# Slide 4 - Query used for fourth insight (JOIN, Aggregation, CTE, Window Function)
+
+WITH CustomerPayments AS ( 
+SELECT customer_id, 
+               SUM(amount) AS total_amount 
+FROM payment 
+WHERE EXTRACT(YEAR FROM payment_date) = 2007 
+GROUP BY customer_id ),
+RankedCustomers AS ( 
+SELECT customer_id, 
+   	      total_amount, 
+   	      RANK() OVER (ORDER BY total_amount DESC) AS rnk FROM CustomerPayments ), 
+MonthlyPayments AS ( 
+SELECT p.customer_id, 
+               CONCAT(c.first_name, ' ', c.last_name) AS fullname, 
+               DATE_TRUNC('month', p.payment_date) AS payment_month, 
+               SUM(p.amount) AS monthly_payment 
+FROM payment p 
+JOIN customer c ON p.customer_id = c.customer_id 
+WHERE EXTRACT(YEAR FROM p.payment_date) = 2007 
+GROUP BY p.customer_id, fullname, payment_month ), 
+MonthlyPaymentDifferences AS ( 
+SELECT mp.customer_id, 
+  	       mp.fullname, 
+               mp.payment_month, 
+               mp.monthly_payment, 
+               LAG(mp.monthly_payment, 1) OVER ( PARTITION BY mp.customer_id ORDER BY mp.payment_month ) AS previous_month_payment, 
+               mp.monthly_payment - LAG(mp.monthly_payment, 1) OVER ( PARTITION BY mp.customer_id ORDER BY mp.payment_month ) AS payment_difference 
+FROM MonthlyPayments mp 
+JOIN RankedCustomers rc ON mp.customer_id = rc.customer_id 
+WHERE rc.rnk <= 10 ) 
+SELECT mpd.fullname, 
+               mpd.payment_month, 
+               mpd.monthly_payment, 
+               mpd.previous_month_payment, 
+               mpd.payment_difference, 
+               MAX(mpd.payment_difference) OVER () AS max_difference 
+FROM MonthlyPaymentDifferences mpd 
+ORDER BY mpd.fullname, mpd.payment_month;
